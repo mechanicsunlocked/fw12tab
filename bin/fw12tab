@@ -1,0 +1,149 @@
+#!/bin/bash
+# fw12tab — Framework 12 tablet mode for Omarchy / Hyprland.
+#
+#   setup          Wire up Hyprland config (run once, as your normal user)
+#   rotate-toggle  Toggle auto-rotation on/off (bound to Super+R)
+#   osk-toggle     Show/hide the on-screen keyboard (wvkbd)
+#   autorotate     Event-driven rotation daemon (exec-once) — ~0% idle CPU
+#   tablet-watch   Hinge-angle tablet-mode watcher (exec-once) — light poll
+#   doctor         Print diagnostics
+#
+# Debug: FW12TAB_DEBUG=1 logs to stderr. Tunables: FW12TAB_ENTER / FW12TAB_EXIT
+# (degrees), FW12TAB_POLL (s), FW12TAB_OSK_HEIGHT (px), FW12TAB_ANGLE_FILE.
+# Inspired by https://github.com/2disbetter/FW12Rotate
+set -u
+
+STATE_FILE="${FW12TAB_STATE:-$HOME/.config/hypr/fw12tab-rotation-enabled}"
+ORIENT_CACHE="${XDG_RUNTIME_DIR:-/tmp}/fw12tab-orientation"
+OSK_BUTTON="${FW12TAB_OSK_BUTTON:-/usr/lib/fw12tab/osk-button.py}"
+CONF="/usr/share/fw12tab/fw12tab.conf"
+
+_dbg()    { [ "${FW12TAB_DEBUG:-0}" = 1 ] && printf '[fw12tab %s] %s\n' "$(date +%T)" "$*" >&2; return 0; }
+_notify() { command -v notify-send >/dev/null 2>&1 && notify-send -i input-tablet "fw12tab" "$1"; return 0; }
+_have()   { command -v "$1" >/dev/null 2>&1; }
+
+# --- rotation (event-driven via iio-sensor-proxy / monitor-sensor) ----------
+_panel() {  # internal panel (eDP*), else first monitor
+  hyprctl monitors -j 2>/dev/null \
+    | jq -r 'map(.name)|((map(select(test("eDP")))|first) // .[0]) // empty' 2>/dev/null
+}
+_scale()     { hyprctl monitors -j 2>/dev/null | jq -r --arg m "$1" '.[]|select(.name==$m)|.scale' 2>/dev/null; }
+_transform() { case "$1" in normal) echo 0;; left-up) echo 1;; bottom-up) echo 2;; right-up) echo 3;; *) echo -1;; esac; }
+_enabled()   { [ "$(cat "$STATE_FILE" 2>/dev/null)" = 1 ]; }
+
+_apply() {  # $1 = orientation
+  printf '%s' "$1" > "$ORIENT_CACHE" 2>/dev/null
+  _enabled || return 0
+  local t mon sc; t=$(_transform "$1"); [ "$t" -ge 0 ] 2>/dev/null || { _dbg "unknown orientation '$1'"; return 0; }
+  mon=$(_panel); [ -n "$mon" ] || { _dbg "no monitor"; return 0; }
+  sc=$(_scale "$mon"); { [ -n "$sc" ] && [ "$sc" != null ]; } || sc=1
+  _dbg "apply $1 -> transform $t on $mon (scale $sc)"
+  hyprctl keyword monitor "$mon, preferred, auto, $sc, transform, $t" >/dev/null 2>&1
+  hyprctl keyword input:touchdevice:transform "$t" >/dev/null 2>&1
+  hyprctl keyword input:tablet:transform "$t" >/dev/null 2>&1
+}
+
+cmd_autorotate() {
+  _have monitor-sensor || { echo "fw12tab: iio-sensor-proxy (monitor-sensor) missing" >&2; exit 1; }
+  printf normal > "$ORIENT_CACHE" 2>/dev/null
+  local line o
+  while :; do  # reconnect if monitor-sensor dies (e.g. proxy restart)
+    while IFS= read -r line; do
+      case "$line" in
+        *"orientation changed: "*) o=${line##*orientation changed: } ;;
+        *"(orientation: "*)        o=${line##*(orientation: } ;;
+        *) continue ;;
+      esac
+      o=${o%%[, )]*}   # keep only the orientation token (drop trailing tilt/paren)
+      _apply "$o"
+    done < <(stdbuf -oL monitor-sensor 2>/dev/null)
+    _dbg "monitor-sensor exited; retrying"; sleep 2
+  done
+}
+
+cmd_rotate_toggle() {
+  local s; s=$(cat "$STATE_FILE" 2>/dev/null); [[ "$s" =~ ^[01]$ ]] || s=0
+  if [ "$s" = 1 ]; then echo 0 > "$STATE_FILE"; _notify "Auto-rotation disabled"
+  else echo 1 > "$STATE_FILE"; _notify "Auto-rotation enabled"; _apply "$(cat "$ORIENT_CACHE" 2>/dev/null || echo normal)"; fi
+}
+
+# --- on-screen keyboard (wvkbd) ---------------------------------------------
+cmd_osk_toggle() {
+  if pgrep -x wvkbd-mobintl >/dev/null 2>&1; then pkill -x wvkbd-mobintl
+  else _have wvkbd-mobintl || { _notify "wvkbd not installed"; exit 1; }
+       setsid -f wvkbd-mobintl -L "${FW12TAB_OSK_HEIGHT:-300}" >/dev/null 2>&1; fi
+}
+
+# --- tablet-mode watcher (hinge angle) --------------------------------------
+# The FW12 EC exposes hinge angle via cros-ec-lid-angle but gives NO interrupt
+# and NO SW_TABLET_MODE switch, so a light periodic read is the minimal-CPU
+# option. Folding is slow, so a 2s poll (one sysfs read) is plenty.
+_angle_file() {
+  [ -n "${FW12TAB_ANGLE_FILE:-}" ] && { printf '%s' "$FW12TAB_ANGLE_FILE"; return 0; }
+  local d
+  for d in /sys/bus/iio/devices/iio:device*; do
+    [ -r "$d/name" ] && [ "$(cat "$d/name" 2>/dev/null)" = cros-ec-lid-angle ] && [ -r "$d/in_angl_raw" ] \
+      && { printf '%s' "$d/in_angl_raw"; return 0; }
+  done
+  return 1
+}
+
+cmd_tablet_watch() {
+  local af mode=laptop a; local ent="${FW12TAB_ENTER:-200}" ext="${FW12TAB_EXIT:-170}" iv="${FW12TAB_POLL:-2}"
+  af=$(_angle_file) || { echo "fw12tab: no cros-ec-lid-angle sensor" >&2; exit 1; }
+  _dbg "watching $af enter>=$ent exit<=$ext every ${iv}s"
+  while :; do
+    a=$(cat "$af" 2>/dev/null)
+    if [[ "$a" =~ ^[0-9]+$ ]]; then
+      if [ "$mode" = laptop ] && [ "$a" -ge "$ent" ]; then
+        mode=tablet; _dbg "tablet (angle $a)"
+        pgrep -f osk-button.py >/dev/null 2>&1 || setsid -f python3 "$OSK_BUTTON" >/dev/null 2>&1
+      elif [ "$mode" = tablet ] && [ "$a" -le "$ext" ]; then
+        mode=laptop; _dbg "laptop (angle $a)"
+        pkill -f osk-button.py 2>/dev/null; pkill -x wvkbd-mobintl 2>/dev/null
+      fi
+    fi
+    sleep "$iv"
+  done
+}
+
+# --- setup / doctor ---------------------------------------------------------
+cmd_setup() {
+  local hypr="$HOME/.config/hypr/hyprland.conf"
+  mkdir -p "$HOME/.config/hypr"; [ -f "$STATE_FILE" ] || echo 0 > "$STATE_FILE"
+  if [ -f "$hypr" ] && grep -qF "fw12tab/fw12tab.conf" "$hypr"; then echo "Already wired up."
+  else printf '\n# fw12tab\nsource = %s\n' "$CONF" >> "$hypr"; echo "Added source line to $hypr"; fi
+  if [ -f "$hypr" ] && grep -qiE '^[[:space:]]*(bind|exec-once)[^#]*(FW12Rotate|rotation-toggle|toggle-rotation\.sh)' "$hypr"; then
+    echo "WARNING: old FW12Rotate lines found in $hypr — remove its 'bind = SUPER, R' and"
+    echo "         'exec-once = .../FW12Rotate' lines to avoid a Super+R clash."
+  fi
+  _have hyprctl && hyprctl reload >/dev/null 2>&1
+  echo "Done. Super+R toggles rotation; fold past ${FW12TAB_ENTER:-200}° for the keyboard button."
+}
+
+cmd_doctor() {
+  local rc=0 b af mon
+  echo "fw12tab doctor"
+  for b in hyprctl jq monitor-sensor wvkbd-mobintl python3 notify-send; do
+    if _have "$b"; then echo "  [ok] $b"; else echo "  [MISSING] $b"; rc=1; fi
+  done
+  if af=$(_angle_file 2>/dev/null); then echo "  [ok] hinge sensor: $af = $(cat "$af" 2>/dev/null)°"
+  else echo "  [MISSING] cros-ec-lid-angle sensor"; rc=1; fi
+  mon=$(_panel)
+  echo "  panel: ${mon:-?} (scale $(_scale "$mon"))"
+  echo "  rotation: $(_enabled && echo enabled || echo disabled); orientation: $(cat "$ORIENT_CACHE" 2>/dev/null || echo n/a)"
+  pgrep -f "fw12tab autorotate"   >/dev/null 2>&1 && echo "  [ok] autorotate running"   || echo "  [--] autorotate not running"
+  pgrep -f "fw12tab tablet-watch" >/dev/null 2>&1 && echo "  [ok] tablet-watch running" || echo "  [--] tablet-watch not running"
+  grep -qF "fw12tab/fw12tab.conf" "$HOME/.config/hypr/hyprland.conf" 2>/dev/null \
+    && echo "  [ok] Hyprland sources fw12tab.conf" || echo "  [--] not wired up (run: fw12tab setup)"
+  [ -f "$OSK_BUTTON" ] && echo "  [ok] osk-button: $OSK_BUTTON" || { echo "  [MISSING] $OSK_BUTTON"; rc=1; }
+  return $rc
+}
+
+case "${1:-}" in
+  setup) cmd_setup ;; rotate-toggle) cmd_rotate_toggle ;; osk-toggle) cmd_osk_toggle ;;
+  autorotate) cmd_autorotate ;; tablet-watch) cmd_tablet_watch ;; doctor) cmd_doctor ;;
+  ""|-h|--help|help)
+    sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *) echo "fw12tab: unknown command '$1'" >&2; exit 1 ;;
+esac

@@ -1,0 +1,6 @@
+# makepkg build artifacts
+/pkg/
+/src/
+*.pkg.tar.zst
+*.tar.gz
+fw12tab/

@@ -1,0 +1,24 @@
+post_install() {
+  cat <<'EOF'
+==> fw12tab installed.
+
+    Finish setup once, as your normal user (not root):
+
+        fw12tab setup
+
+    Then relaunch Hyprland (Super+Esc -> Relaunch, or `hyprctl reload`).
+
+    Usage:
+      * Super+R          toggle auto-rotation
+      * Fold past ~200°  a draggable keyboard button appears
+      * Tap the button   show/hide the on-screen keyboard
+      * Drag the button  move it anywhere
+
+    If you previously used FW12Rotate, remove its `bind = SUPER, R` and
+    `exec-once = .../FW12Rotate` lines from ~/.config/hypr/ to avoid clashes.
+EOF
+}
+
+post_upgrade() {
+  post_install
+}
