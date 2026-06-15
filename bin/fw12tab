@@ -123,36 +123,37 @@ _angle_file() {
 }
 
 cmd_tablet_watch() {
-  local af mode=laptop a o tilted folded
+  local af mode=laptop a o tilted valid laptop_angle
   local ent="${FW12TAB_ENTER:-170}" ext="${FW12TAB_EXIT:-140}" iv="${FW12TAB_POLL:-2}"
   af=$(_angle_file) || { echo "fw12tab: no cros-ec-lid-angle sensor" >&2; exit 1; }
   _dbg "watching $af enter>=$ent exit<=$ext (or tilt) every ${iv}s"
   # The watcher owns the button's lifecycle: start clean, then let hinge angle
-  # AND accelerometer orientation drive it.
+  # (with accelerometer tilt as a backup) drive it.
   pkill -x osk-button 2>/dev/null
   while :; do
     a=$(cat "$af" 2>/dev/null)
-    [[ "$a" =~ ^[0-9]+$ ]] && [ "$a" -le 360 ] || a=""   # drop >360 sentinel/garbage
+    # A real reading is 0..360. The EC returns 500 when fully folded into tablet
+    # (~>345°), briefly during fast motion, AND when the base accelerometer is
+    # asleep after suspend/resume. 500 is therefore ambiguous: it must HOLD the
+    # current mode, never flip it. The real through-motion angles on the way
+    # into/out of a fold are what actually drive the transitions.
+    if [[ "$a" =~ ^[0-9]+$ ]] && [ "$a" -le 360 ]; then valid=1; else valid=0; fi
     o=$(cat "$ORIENT_CACHE" 2>/dev/null)                 # normal / left-up / ... (from autorotate)
     tilted=0; [ -n "$o" ] && [ "$o" != normal ] && tilted=1
-    # "folded" = the hinge is CLEARLY open past the threshold, from a *valid*
-    # reading. The FW12 EC frequently returns a >360 'uncertain' sentinel (e.g.
-    # 500) even sitting open as a laptop, so a missing/invalid angle must NOT
-    # count as folded — orientation is the reliable signal, exactly as on a
-    # tablet you tilt to use and set flat (normal) to stop using.
-    folded=0
     if [ "$mode" = laptop ]; then
-      [ -n "$a" ] && [ "$a" -ge "$ent" ] && folded=1
-      if [ "$folded" = 1 ] || [ "$tilted" = 1 ]; then
+      # Enter on a valid folded angle, OR on tilt — but a valid laptop-range
+      # angle vetoes tilt (guards against a stale orientation flapping the
+      # button while the hinge clearly says laptop).
+      laptop_angle=0; [ "$valid" = 1 ] && [ "$a" -le "$ext" ] && laptop_angle=1
+      if { [ "$valid" = 1 ] && [ "$a" -ge "$ent" ]; } || { [ "$tilted" = 1 ] && [ "$laptop_angle" = 0 ]; }; then
         mode=tablet; _dbg "tablet (angle ${a:-?} orient ${o:-?})"; _osk_button_up
       fi
     else
-      [ -n "$a" ] && [ "$a" -ge "$ext" ] && folded=1   # hysteresis: stays up >ext
-      # Hide as soon as we're back to normal orientation and the hinge isn't
-      # clearly folded. Crucially do NOT require a valid low angle here, or the
-      # 500 sentinel would pin the button on screen forever (the reported bug).
-      if [ "$tilted" = 0 ] && [ "$folded" = 0 ]; then
-        mode=laptop; _dbg "laptop (angle ${a:-?} orient ${o:-?})"
+      # Leave tablet only on a real angle back in the laptop range. 500 (folded
+      # flat) and motion glitches keep the button up — the 'vanishes in tablet'
+      # fix: orientation is NOT used to hide.
+      if [ "$valid" = 1 ] && [ "$a" -le "$ext" ]; then
+        mode=laptop; _dbg "laptop (angle $a orient ${o:-?})"
         pkill -x osk-button 2>/dev/null; pkill -x wvkbd-mobintl 2>/dev/null
       fi
     fi
