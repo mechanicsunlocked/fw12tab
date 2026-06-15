@@ -228,6 +228,7 @@ int main(int argc, char **argv) {
       "                if (keyboard.mods & Alt)   zwp_virtual_keyboard_v1_key(keyboard.vkbd, 0, 56, WL_KEYBOARD_KEY_STATE_RELEASED);\n"
       "                if (keyboard.mods & Super) zwp_virtual_keyboard_v1_key(keyboard.vkbd, 0, 125, WL_KEYBOARD_KEY_STATE_RELEASED);\n"
       "                if (keyboard.mods & AltGr) zwp_virtual_keyboard_v1_key(keyboard.vkbd, 0, 100, WL_KEYBOARD_KEY_STATE_RELEASED);\n"
+      "                zwp_virtual_keyboard_v1_modifiers(keyboard.vkbd, 0, 0, 0, 0);\n"
       "                keyboard.mods = 0; wl_display_flush(display); run_display = false;\n"
       "            }");
     write_file(p3, mc);
