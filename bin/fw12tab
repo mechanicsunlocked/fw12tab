@@ -123,7 +123,7 @@ _angle_file() {
 }
 
 cmd_tablet_watch() {
-  local af mode=laptop a o tilted
+  local af mode=laptop a o tilted folded
   local ent="${FW12TAB_ENTER:-170}" ext="${FW12TAB_EXIT:-140}" iv="${FW12TAB_POLL:-2}"
   af=$(_angle_file) || { echo "fw12tab: no cros-ec-lid-angle sensor" >&2; exit 1; }
   _dbg "watching $af enter>=$ent exit<=$ext (or tilt) every ${iv}s"
@@ -135,15 +135,24 @@ cmd_tablet_watch() {
     [[ "$a" =~ ^[0-9]+$ ]] && [ "$a" -le 360 ] || a=""   # drop >360 sentinel/garbage
     o=$(cat "$ORIENT_CACHE" 2>/dev/null)                 # normal / left-up / ... (from autorotate)
     tilted=0; [ -n "$o" ] && [ "$o" != normal ] && tilted=1
+    # "folded" = the hinge is CLEARLY open past the threshold, from a *valid*
+    # reading. The FW12 EC frequently returns a >360 'uncertain' sentinel (e.g.
+    # 500) even sitting open as a laptop, so a missing/invalid angle must NOT
+    # count as folded — orientation is the reliable signal, exactly as on a
+    # tablet you tilt to use and set flat (normal) to stop using.
+    folded=0
     if [ "$mode" = laptop ]; then
-      # show on fold past the enter angle OR when physically tilted off-normal
-      if { [ -n "$a" ] && [ "$a" -ge "$ent" ]; } || [ "$tilted" = 1 ]; then
+      [ -n "$a" ] && [ "$a" -ge "$ent" ] && folded=1
+      if [ "$folded" = 1 ] || [ "$tilted" = 1 ]; then
         mode=tablet; _dbg "tablet (angle ${a:-?} orient ${o:-?})"; _osk_button_up
       fi
     else
-      # hide only with a valid angle at/below the exit angle AND back to normal
-      if [ -n "$a" ] && [ "$a" -le "$ext" ] && [ "$tilted" = 0 ]; then
-        mode=laptop; _dbg "laptop (angle $a orient ${o:-?})"
+      [ -n "$a" ] && [ "$a" -ge "$ext" ] && folded=1   # hysteresis: stays up >ext
+      # Hide as soon as we're back to normal orientation and the hinge isn't
+      # clearly folded. Crucially do NOT require a valid low angle here, or the
+      # 500 sentinel would pin the button on screen forever (the reported bug).
+      if [ "$tilted" = 0 ] && [ "$folded" = 0 ]; then
+        mode=laptop; _dbg "laptop (angle ${a:-?} orient ${o:-?})"
         pkill -x osk-button 2>/dev/null; pkill -x wvkbd-mobintl 2>/dev/null
       fi
     fi
