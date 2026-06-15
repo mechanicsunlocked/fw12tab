@@ -91,23 +91,29 @@ class App(Gtk.Application):
         box.append(child)
         win.set_child(box)
 
-        # --- drag to move (updates layer margins), tap to toggle ---
-        start = {"x": 0, "y": 0}
+        # --- drag to move (updates layer margins), short tap to toggle ---
+        # `moved` distinguishes a tap from a drag so a drag-release never
+        # toggles the keyboard.
+        start = {"x": 0, "y": 0, "moved": False}
         drag = Gtk.GestureDrag()
         drag.set_button(0)  # any button / touch
 
         def on_begin(_g, _x, _y):
-            start["x"], start["y"] = pos["x"], pos["y"]
+            start["x"], start["y"], start["moved"] = pos["x"], pos["y"], False
 
         def on_update(_g, off_x, off_y):
-            if off_x * off_x + off_y * off_y < MOVE_THRESHOLD_SQ:
-                return
+            if not start["moved"] and \
+                    off_x * off_x + off_y * off_y < MOVE_THRESHOLD_SQ:
+                return  # still within the tap threshold
+            start["moved"] = True
             pos["x"] = min(max(0, int(start["x"] + off_x)), max(0, mw - SIZE))
             pos["y"] = min(max(0, int(start["y"] + off_y)), max(0, mh - SIZE))
             LS.set_margin(win, LS.Edge.LEFT, pos["x"])
             LS.set_margin(win, LS.Edge.TOP, pos["y"])
 
         def on_end(_g, _ox, _oy):
+            if not start["moved"]:
+                return
             try:  # remember position so a respawn lands where the user left it
                 with open(POS_FILE, "w") as f:
                     f.write("%d %d" % (pos["x"], pos["y"]))
@@ -119,13 +125,14 @@ class App(Gtk.Application):
         drag.connect("drag-end", on_end)
         win.add_controller(drag)
 
-        # GestureClick reliably fires for a touch tap; it is denied (so it
-        # won't toggle) when GestureDrag claims the sequence as a real move.
+        # GestureClick fires reliably for a touch tap; only toggle when the
+        # press did not turn into a drag (a move).
         click = Gtk.GestureClick()
         click.set_button(0)
 
         def on_released(_g, _n, _x, _y):
-            subprocess.Popen(["fw12tab", "osk-toggle"])
+            if not start["moved"]:
+                subprocess.Popen(["fw12tab", "osk-toggle"])
 
         click.connect("released", on_released)
         win.add_controller(click)

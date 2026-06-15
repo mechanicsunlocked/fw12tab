@@ -115,9 +115,12 @@ _angle_file() {
 }
 
 cmd_tablet_watch() {
-  local af mode=laptop a; local ent="${FW12TAB_ENTER:-200}" ext="${FW12TAB_EXIT:-170}" iv="${FW12TAB_POLL:-2}"
+  local af mode=laptop a; local ent="${FW12TAB_ENTER:-170}" ext="${FW12TAB_EXIT:-160}" iv="${FW12TAB_POLL:-2}"
   af=$(_angle_file) || { echo "fw12tab: no cros-ec-lid-angle sensor" >&2; exit 1; }
   _dbg "watching $af enter>=$ent exit<=$ext every ${iv}s"
+  # The watcher owns the button's lifecycle: start clean (laptop posture shows
+  # no button) and let the angle drive it from here.
+  pkill -f osk-button.py 2>/dev/null
   while :; do
     a=$(cat "$af" 2>/dev/null)
     if [[ "$a" =~ ^[0-9]+$ ]]; then
