@@ -25,7 +25,7 @@ Then relaunch Hyprland (`Super+Esc → Relaunch`, or `hyprctl reload`).
 
 ### From source
 ```bash
-git clone https://github.com/__GHUSER__/fw12tab && cd fw12tab
+git clone https://github.com/mechanicsunlocked/fw12tab && cd fw12tab
 makepkg -si             # builds + installs via pacman
 # — or, without packaging —
 ./install.sh
