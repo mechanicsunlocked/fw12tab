@@ -9,10 +9,10 @@ pkgdesc="Framework 12 tablet mode for Omarchy/Hyprland: auto-rotation + on-scree
 arch=('x86_64')
 url="https://github.com/mechanicsunlocked/fw12tab"
 license=('MIT')
-depends=('bash' 'iio-sensor-proxy' 'jq' 'python-gobject' 'gtk4' 'gtk4-layer-shell'
+depends=('bash' 'iio-sensor-proxy' 'jq' 'gtk4' 'gtk4-layer-shell'
          'libnotify' 'wayland' 'libxkbcommon' 'pango' 'cairo' 'glib2' 'harfbuzz')
 optdepends=('hyprland: required for intended use')
-makedepends=('git' 'wayland-protocols' 'xkeyboard-config')
+makedepends=('git' 'gcc' 'pkgconf' 'wayland-protocols' 'xkeyboard-config')
 provides=("$_pkgname")
 conflicts=("$_pkgname")
 source=("git+$url.git"
@@ -26,16 +26,22 @@ pkgver() {
 }
 
 build() {
-  # German (QWERTZ) on-screen keyboard: inject the layer + de keymap, compile.
-  xkbcli compile-keymap --layout de > "$srcdir/de.xkb"
-  python3 "$srcdir/$_pkgname/keyboard/patch-german.py" "$srcdir/wvkbd" "$srcdir/de.xkb"
+  cd "$_pkgname"
+  # On-screen keyboard: generate a layer matching the build host's layout and
+  # compile wvkbd (self-contained C generator, no Python / xkbcli subprocess).
+  cc -O2 -o "$srcdir/genlayout" keyboard/genlayout.c -lxkbcommon
+  _layout="${FW12TAB_KB_LAYOUT:-$(localectl status 2>/dev/null | sed -nE 's/.*X11 Layout:[[:space:]]*([^ ,]+).*/\1/p')}"
+  "$srcdir/genlayout" "$srcdir/wvkbd" "${_layout:-us}" "" ""
   make -C "$srcdir/wvkbd" wvkbd-mobintl
+  # Toggle button (C / GTK4 layer-shell).
+  cc -O2 -o "$srcdir/osk-button" lib/osk-button.c \
+     $(pkg-config --cflags --libs gtk4-layer-shell-0 gtk4)
 }
 
 package() {
   cd "$_pkgname"
   install -Dm755 bin/fw12tab               "$pkgdir/usr/bin/fw12tab"
-  install -Dm755 lib/osk-button.py         "$pkgdir/usr/lib/$_pkgname/osk-button.py"
+  install -Dm755 "$srcdir/osk-button"      "$pkgdir/usr/lib/$_pkgname/osk-button"
   install -Dm755 "$srcdir/wvkbd/wvkbd-mobintl" "$pkgdir/usr/lib/$_pkgname/wvkbd-mobintl"
   install -Dm644 hypr/fw12tab.conf         "$pkgdir/usr/share/$_pkgname/fw12tab.conf"
   install -Dm644 share/framework-logo.svg  "$pkgdir/usr/share/$_pkgname/framework-logo.svg"

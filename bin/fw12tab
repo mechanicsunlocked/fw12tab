@@ -15,7 +15,7 @@ set -u
 
 STATE_FILE="${FW12TAB_STATE:-$HOME/.config/hypr/fw12tab-rotation-enabled}"
 ORIENT_CACHE="${XDG_RUNTIME_DIR:-/tmp}/fw12tab-orientation"
-OSK_BUTTON="${FW12TAB_OSK_BUTTON:-/usr/lib/fw12tab/osk-button.py}"
+OSK_BUTTON="${FW12TAB_OSK_BUTTON:-/usr/lib/fw12tab/osk-button}"
 CONF="/usr/share/fw12tab/fw12tab.conf"
 
 # On-screen keyboard binary: prefer fw12tab's German-QWERTZ build, fall back to
@@ -30,20 +30,10 @@ _osk_bin() {
 }
 OSK_BIN="$(_osk_bin)"
 case "$OSK_BIN" in
-  /usr/lib/fw12tab/*) _def_layers="deutsch,special,nav" ;;  # German build
-  *)                  _def_layers="full,special,nav" ;;     # stock fallback
+  /usr/lib/fw12tab/*) _def_layers="system,special,nav" ;;  # layout-matched build
+  *)                  _def_layers="full,special,nav" ;;    # stock fallback
 esac
 OSK_LAYERS="${FW12TAB_OSK_LAYERS:-$_def_layers}"
-
-# gtk4-layer-shell must be preloaded for the Python/GI button to register as a
-# layer surface (else libwayland-client loads first and the hook fails).
-_osk_preload() {
-  local p
-  for p in /usr/lib/libgtk4-layer-shell.so /usr/lib/liblayer-shell-preload.so; do
-    [ -e "$p" ] && { printf '%s' "$p"; return; }
-  done
-}
-OSK_PRELOAD="${FW12TAB_OSK_PRELOAD-$(_osk_preload)}"
 
 _dbg()    { [ "${FW12TAB_DEBUG:-0}" = 1 ] && printf '[fw12tab %s] %s\n' "$(date +%T)" "$*" >&2; return 0; }
 _notify() { command -v notify-send >/dev/null 2>&1 && notify-send -i input-tablet "fw12tab" "$1"; return 0; }
@@ -95,17 +85,16 @@ cmd_rotate_toggle() {
 }
 
 # --- on-screen keyboard (wvkbd) ---------------------------------------------
-# Spawn the floating toggle button if it isn't already up (preloading the
-# layer-shell lib so the GI window registers as a layer surface).
+# The toggle button is a small C/GTK4 layer-shell binary (osk-button).
 _osk_launch() {
-  [ -f "$OSK_BUTTON" ] || return 1
-  setsid -f env ${OSK_PRELOAD:+LD_PRELOAD="$OSK_PRELOAD"} python3 "$OSK_BUTTON" >/dev/null 2>&1
+  [ -x "$OSK_BUTTON" ] || return 1
+  setsid -f "$OSK_BUTTON" >/dev/null 2>&1
 }
 _osk_button_up() {  # spawn only if not already running (tablet entry)
-  pgrep -f osk-button.py >/dev/null 2>&1 || _osk_launch
+  pgrep -x osk-button >/dev/null 2>&1 || _osk_launch
 }
 _osk_button_restack() {  # force the button to be the newest overlay -> on top
-  pkill -f osk-button.py 2>/dev/null; sleep 0.3; _osk_launch
+  pkill -x osk-button 2>/dev/null; sleep 0.3; _osk_launch
 }
 
 cmd_osk_toggle() {
@@ -139,7 +128,7 @@ cmd_tablet_watch() {
   _dbg "watching $af enter>=$ent exit<=$ext every ${iv}s"
   # The watcher owns the button's lifecycle: start clean (laptop posture shows
   # no button) and let the angle drive it from here.
-  pkill -f osk-button.py 2>/dev/null
+  pkill -x osk-button 2>/dev/null
   while :; do
     a=$(cat "$af" 2>/dev/null)
     # Ignore out-of-range readings (the EC reports a >360 sentinel, e.g. 500,
@@ -174,11 +163,9 @@ cmd_setup() {
 cmd_doctor() {
   local rc=0 b af mon
   echo "fw12tab doctor"
-  for b in hyprctl jq monitor-sensor python3 notify-send; do
+  for b in hyprctl jq monitor-sensor notify-send; do
     if _have "$b"; then echo "  [ok] $b"; else echo "  [MISSING] $b"; rc=1; fi
   done
-  if python3 -c "import gi; gi.require_version('Gtk4LayerShell','1.0'); from gi.repository import Gtk4LayerShell" 2>/dev/null
-  then echo "  [ok] gtk4-layer-shell (python)"; else echo "  [MISSING] gtk4-layer-shell python bindings"; rc=1; fi
   if af=$(_angle_file 2>/dev/null); then echo "  [ok] hinge sensor: $af = $(cat "$af" 2>/dev/null)°"
   else echo "  [MISSING] cros-ec-lid-angle sensor"; rc=1; fi
   mon=$(_panel)
@@ -188,9 +175,9 @@ cmd_doctor() {
   pgrep -f "fw12tab tablet-watch" >/dev/null 2>&1 && echo "  [ok] tablet-watch running" || echo "  [--] tablet-watch not running"
   grep -qF "fw12tab/fw12tab.conf" "$HOME/.config/hypr/hyprland.conf" 2>/dev/null \
     && echo "  [ok] Hyprland sources fw12tab.conf" || echo "  [--] not wired up (run: fw12tab setup)"
-  [ -f "$OSK_BUTTON" ] && echo "  [ok] osk-button: $OSK_BUTTON" || { echo "  [MISSING] $OSK_BUTTON"; rc=1; }
+  [ -x "$OSK_BUTTON" ] && echo "  [ok] osk-button (C): $OSK_BUTTON" || { echo "  [MISSING] $OSK_BUTTON"; rc=1; }
   if [ -x "$OSK_BIN" ]; then
-    case "$OSK_BIN" in /usr/lib/fw12tab/*) b="German build";; *) b="stock (no German layer)";; esac
+    case "$OSK_BIN" in /usr/lib/fw12tab/*) b="layout-matched build";; *) b="stock (generic 'full')";; esac
     echo "  [ok] keyboard: $OSK_BIN — $b; layers: $OSK_LAYERS"
   else echo "  [MISSING] no wvkbd binary"; rc=1; fi
   return $rc

@@ -1,6 +1,9 @@
-# makepkg build artifacts
-/pkg/
-/src/
-*.pkg.tar.zst
-*.tar.gz
 fw12tab/
+keyboard/genlayout
+lib/osk-button
+# makepkg build artifacts
+*.o
+/pkg/
+*.pkg.tar.zst
+/src/
+*.tar.gz
