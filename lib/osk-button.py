@@ -62,11 +62,27 @@ class App(Gtk.Application):
         LS.set_anchor(win, LS.Edge.TOP, True)
         LS.set_anchor(win, LS.Edge.LEFT, True)
 
-        # Monitor size (logical px) for initial top-right placement + clamping.
-        mw, mh = self._monitor_size()
-        pos = self._load_pos(mw, mh)
-        LS.set_margin(win, LS.Edge.LEFT, pos["x"])
-        LS.set_margin(win, LS.Edge.TOP, pos["y"])
+        # Track monitor geometry so the button re-clamps onto the screen after
+        # a rotation (logical width/height swap) instead of drifting off-screen.
+        mon = self._monitor()
+        dim = {"w": 1280, "h": 800}
+        pos = {"x": 0, "y": 0}
+
+        def reflow(*_a):
+            if mon is not None:
+                geo = mon.get_geometry()
+                if geo.width > 0 and geo.height > 0:
+                    dim["w"], dim["h"] = geo.width, geo.height
+            pos["x"] = min(max(0, pos["x"]), max(0, dim["w"] - SIZE))
+            pos["y"] = min(max(0, pos["y"]), max(0, dim["h"] - SIZE))
+            LS.set_margin(win, LS.Edge.LEFT, pos["x"])
+            LS.set_margin(win, LS.Edge.TOP, pos["y"])
+
+        reflow()                                  # seed dim from geometry
+        pos.update(self._load_pos(dim["w"], dim["h"]))
+        reflow()                                  # apply loaded/default position
+        if mon is not None:
+            mon.connect("notify::geometry", reflow)
 
         provider = Gtk.CssProvider()
         provider.load_from_string(CSS)
@@ -106,8 +122,8 @@ class App(Gtk.Application):
                     off_x * off_x + off_y * off_y < MOVE_THRESHOLD_SQ:
                 return  # still within the tap threshold
             start["moved"] = True
-            pos["x"] = min(max(0, int(start["x"] + off_x)), max(0, mw - SIZE))
-            pos["y"] = min(max(0, int(start["y"] + off_y)), max(0, mh - SIZE))
+            pos["x"] = min(max(0, int(start["x"] + off_x)), max(0, dim["w"] - SIZE))
+            pos["y"] = min(max(0, int(start["y"] + off_y)), max(0, dim["h"] - SIZE))
             LS.set_margin(win, LS.Edge.LEFT, pos["x"])
             LS.set_margin(win, LS.Edge.TOP, pos["y"])
 
@@ -149,13 +165,11 @@ class App(Gtk.Application):
             pass
         return {"x": x, "y": y}
 
-    def _monitor_size(self):
+    def _monitor(self):
         try:
-            mons = Gdk.Display.get_default().get_monitors()
-            geo = mons.get_item(0).get_geometry()
-            return geo.width, geo.height
+            return Gdk.Display.get_default().get_monitors().get_item(0)
         except Exception:
-            return 1280, 800  # safe fallback
+            return None
 
 
 if __name__ == "__main__":

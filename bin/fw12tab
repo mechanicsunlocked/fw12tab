@@ -142,7 +142,9 @@ cmd_tablet_watch() {
   pkill -f osk-button.py 2>/dev/null
   while :; do
     a=$(cat "$af" 2>/dev/null)
-    if [[ "$a" =~ ^[0-9]+$ ]]; then
+    # Ignore out-of-range readings (the EC reports a >360 sentinel, e.g. 500,
+    # when the angle is indeterminate) so the button doesn't flicker on.
+    if [[ "$a" =~ ^[0-9]+$ ]] && [ "$a" -le 360 ]; then
       if [ "$mode" = laptop ] && [ "$a" -ge "$ent" ]; then
         mode=tablet; _dbg "tablet (angle $a)"
         _osk_button_up
