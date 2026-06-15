@@ -17,8 +17,10 @@
 #include <linux/input-event-codes.h>
 #include <xkbcommon/xkbcommon.h>
 
-static const int row_num[]  = {KEY_1, KEY_2, KEY_3, KEY_4, KEY_5, KEY_6, KEY_7,
-                               KEY_8, KEY_9, KEY_0, KEY_MINUS, KEY_EQUAL};
+/* Physical ISO 105-key main block (positions; labels resolved from the keymap).
+ * R1: ^ 1..0 ß ´     R2: q..p ü +     R3: a..l ö ä #     R4: < y..m , . - */
+static const int row_num[]  = {KEY_GRAVE, KEY_1, KEY_2, KEY_3, KEY_4, KEY_5, KEY_6,
+                               KEY_7, KEY_8, KEY_9, KEY_0, KEY_MINUS, KEY_EQUAL};
 static const int row_top[]  = {KEY_Q, KEY_W, KEY_E, KEY_R, KEY_T, KEY_Y, KEY_U,
                                KEY_I, KEY_O, KEY_P, KEY_LEFTBRACE, KEY_RIGHTBRACE};
 static const int row_home[] = {KEY_A, KEY_S, KEY_D, KEY_F, KEY_G, KEY_H, KEY_J,
@@ -113,31 +115,45 @@ static char *emit_row(char *buf, const int *keys, int n) {
   return appendf(buf, "  {\"\", \"\", 0.0, EndRow},\n");
 }
 
+/* Build a physical-ISO-faithful layer. Modifier keys (Ctrl/Super/Alt/AltGr)
+ * sit in the BOTTOM row exactly like a real keyboard — Super is NOT in row 1.
+ * A slim top row adds Esc / layer-switch / arrows (touch convenience). */
 static char *build_keys_array(void) {
   char *b = xstrdup("static struct key keys_system[] = {\n");
+  /* top utility strip */
   b = appendf(b, "  {\"Esc\", \"Esc\", 1.0, Code, KEY_ESC, .scheme = 1},\n");
-  b = appendf(b, "  {\"Ctr\", \"Ctr\", 1.0, Mod, Ctrl, .scheme = 1},\n");
-  b = appendf(b, "  {\"Alt\", \"Alt\", 1.0, Mod, Alt, .scheme = 1},\n");
-  b = appendf(b, "  {\"Sup\", \"Sup\", 1.0, Mod, Super, .scheme = 1},\n");
-  b = appendf(b, "  {\"↑\", \"↑\", 1.0, Code, KEY_UP, .scheme = 1},\n");
-  b = appendf(b, "  {\"↓\", \"↓\", 1.0, Code, KEY_DOWN, .scheme = 1},\n");
-  b = appendf(b, "  {\"←\", \"←\", 1.0, Code, KEY_LEFT, .scheme = 1},\n");
-  b = appendf(b, "  {\"→\", \"→\", 1.0, Code, KEY_RIGHT, .scheme = 1},\n");
-  b = appendf(b, "  {\"Tab\", \"Tab\", 1.0, Code, KEY_TAB, .scheme = 1},\n");
-  b = appendf(b, "  {\"\", \"\", 0.0, EndRow},\n");
-  b = emit_row(b, row_num,  sizeof row_num  / sizeof *row_num);
-  b = emit_row(b, row_top,  sizeof row_top  / sizeof *row_top);
-  b = emit_row(b, row_home, sizeof row_home / sizeof *row_home);
-  b = appendf(b, "  {\"⇧\", \"⇫\", 1.5, Mod, Shift, .scheme = 1},\n");
-  for (unsigned i = 0; i < sizeof row_bot / sizeof *row_bot; i++) b = emit_key(b, row_bot[i]);
-  b = appendf(b, "  {\"⌫\", \"⌫\", 1.5, Code, KEY_BACKSPACE, .scheme = 1},\n");
-  b = appendf(b, "  {\"\", \"\", 0.0, EndRow},\n");
-  b = appendf(b, "  {\"⌨͕\", \"⌨͔\", 1.5, NextLayer, .scheme = 1},\n");
+  b = appendf(b, "  {\"⌨͕\", \"⌨͔\", 1.0, NextLayer, .scheme = 1},\n");
   b = appendf(b, "  {\"Cmp\", \"Cmp\", 1.0, Compose, .scheme = 1},\n");
-  b = appendf(b, "  {\"AltGr\", \"AltGr\", 1.0, Mod, AltGr, .scheme = 1},\n");
-  b = appendf(b, "  {\"\", \"\", 4.0, Code, KEY_SPACE},\n");
-  b = appendf(b, "  {\"Sup\", \"Sup\", 1.0, Mod, Super, .scheme = 1},\n");
-  b = appendf(b, "  {\"Enter\", \"Enter\", 1.5, Code, KEY_ENTER, .scheme = 1},\n");
+  b = appendf(b, "  {\"←\", \"←\", 1.0, Code, KEY_LEFT, .scheme = 1},\n");
+  b = appendf(b, "  {\"↓\", \"↓\", 1.0, Code, KEY_DOWN, .scheme = 1},\n");
+  b = appendf(b, "  {\"↑\", \"↑\", 1.0, Code, KEY_UP, .scheme = 1},\n");
+  b = appendf(b, "  {\"→\", \"→\", 1.0, Code, KEY_RIGHT, .scheme = 1},\n");
+  b = appendf(b, "  {\"\", \"\", 0.0, EndRow},\n");
+  /* R1 number row + Backspace */
+  for (unsigned i = 0; i < sizeof row_num / sizeof *row_num; i++) b = emit_key(b, row_num[i]);
+  b = appendf(b, "  {\"⌫\", \"⌫\", 2.0, Code, KEY_BACKSPACE, .scheme = 1},\n");
+  b = appendf(b, "  {\"\", \"\", 0.0, EndRow},\n");
+  /* R2 Tab + qwertz */
+  b = appendf(b, "  {\"Tab\", \"Tab\", 1.5, Code, KEY_TAB, .scheme = 1},\n");
+  for (unsigned i = 0; i < sizeof row_top / sizeof *row_top; i++) b = emit_key(b, row_top[i]);
+  b = appendf(b, "  {\"\", \"\", 0.0, EndRow},\n");
+  /* R3 Caps + home row + Enter */
+  b = appendf(b, "  {\"⇪\", \"⇪\", 1.75, Code, KEY_CAPSLOCK, .scheme = 1},\n");
+  for (unsigned i = 0; i < sizeof row_home / sizeof *row_home; i++) b = emit_key(b, row_home[i]);
+  b = appendf(b, "  {\"⏎\", \"⏎\", 1.75, Code, KEY_ENTER, .scheme = 1},\n");
+  b = appendf(b, "  {\"\", \"\", 0.0, EndRow},\n");
+  /* R4 Shift + < + zxc... + Shift */
+  b = appendf(b, "  {\"⇧\", \"⇫\", 1.25, Mod, Shift, .scheme = 1},\n");
+  for (unsigned i = 0; i < sizeof row_bot / sizeof *row_bot; i++) b = emit_key(b, row_bot[i]);
+  b = appendf(b, "  {\"⇧\", \"⇫\", 1.75, Mod, Shift, .scheme = 1},\n");
+  b = appendf(b, "  {\"\", \"\", 0.0, EndRow},\n");
+  /* R5 modifier row — physical ISO order: Ctrl Super Alt Space AltGr Ctrl */
+  b = appendf(b, "  {\"Ctrl\", \"Ctrl\", 1.5, Mod, Ctrl, .scheme = 1},\n");
+  b = appendf(b, "  {\"Super\", \"Super\", 1.25, Mod, Super, .scheme = 1},\n");
+  b = appendf(b, "  {\"Alt\", \"Alt\", 1.25, Mod, Alt, .scheme = 1},\n");
+  b = appendf(b, "  {\"\", \"\", 5.0, Code, KEY_SPACE},\n");
+  b = appendf(b, "  {\"AltGr\", \"AltGr\", 1.25, Mod, AltGr, .scheme = 1},\n");
+  b = appendf(b, "  {\"Ctrl\", \"Ctrl\", 1.5, Mod, Ctrl, .scheme = 1},\n");
   b = appendf(b, "  {\"\", \"\", 0.0, Last},\n};\n");
   return b;
 }
@@ -190,6 +206,31 @@ int main(int argc, char **argv) {
     lo = replace_once(lo, "static struct key keys_special[] = {", ins);
     free(ins);
     write_file(p2, lo);
+  }
+
+  /* ---- patch main.c: release latched modifiers on SIGTERM/SIGINT ----
+   * Otherwise `pkill wvkbd` while e.g. Super is latched leaves it stuck in the
+   * compositor, turning mouse clicks into window-move (Super+drag). Linux key
+   * codes: LSHIFT 42, LCTRL 29, LALT 56, LMETA 125, RALT 100. */
+  char p3[512]; snprintf(p3, sizeof p3, "%s/main.c", src);
+  char *mc = read_file(p3);
+  if (!strstr(mc, "ssi_signo == SIGTERM")) {
+    mc = replace_once(mc, "sigaddset(&signal_mask, SIGPIPE);",
+      "sigaddset(&signal_mask, SIGPIPE);\n"
+      "    sigaddset(&signal_mask, SIGTERM);\n"
+      "    sigaddset(&signal_mask, SIGINT);");
+    mc = replace_once(mc,
+      "else if (si.ssi_signo == SIGPIPE)\n                pipewarn();",
+      "else if (si.ssi_signo == SIGPIPE)\n                pipewarn();\n"
+      "            else if (si.ssi_signo == SIGTERM || si.ssi_signo == SIGINT) {\n"
+      "                if (keyboard.mods & Shift) zwp_virtual_keyboard_v1_key(keyboard.vkbd, 0, 42, WL_KEYBOARD_KEY_STATE_RELEASED);\n"
+      "                if (keyboard.mods & Ctrl)  zwp_virtual_keyboard_v1_key(keyboard.vkbd, 0, 29, WL_KEYBOARD_KEY_STATE_RELEASED);\n"
+      "                if (keyboard.mods & Alt)   zwp_virtual_keyboard_v1_key(keyboard.vkbd, 0, 56, WL_KEYBOARD_KEY_STATE_RELEASED);\n"
+      "                if (keyboard.mods & Super) zwp_virtual_keyboard_v1_key(keyboard.vkbd, 0, 125, WL_KEYBOARD_KEY_STATE_RELEASED);\n"
+      "                if (keyboard.mods & AltGr) zwp_virtual_keyboard_v1_key(keyboard.vkbd, 0, 100, WL_KEYBOARD_KEY_STATE_RELEASED);\n"
+      "                keyboard.mods = 0; wl_display_flush(display); run_display = false;\n"
+      "            }");
+    write_file(p3, mc);
   }
 
   fprintf(stderr, "genlayout: patched wvkbd with 'system' layer for layout '%s'\n", argv[2]);

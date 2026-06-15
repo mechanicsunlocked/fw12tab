@@ -123,23 +123,28 @@ _angle_file() {
 }
 
 cmd_tablet_watch() {
-  local af mode=laptop a; local ent="${FW12TAB_ENTER:-170}" ext="${FW12TAB_EXIT:-160}" iv="${FW12TAB_POLL:-2}"
+  local af mode=laptop a o tilted
+  local ent="${FW12TAB_ENTER:-170}" ext="${FW12TAB_EXIT:-140}" iv="${FW12TAB_POLL:-2}"
   af=$(_angle_file) || { echo "fw12tab: no cros-ec-lid-angle sensor" >&2; exit 1; }
-  _dbg "watching $af enter>=$ent exit<=$ext every ${iv}s"
-  # The watcher owns the button's lifecycle: start clean (laptop posture shows
-  # no button) and let the angle drive it from here.
+  _dbg "watching $af enter>=$ent exit<=$ext (or tilt) every ${iv}s"
+  # The watcher owns the button's lifecycle: start clean, then let hinge angle
+  # AND accelerometer orientation drive it.
   pkill -x osk-button 2>/dev/null
   while :; do
     a=$(cat "$af" 2>/dev/null)
-    # Ignore out-of-range readings (the EC reports a >360 sentinel, e.g. 500,
-    # when the angle is indeterminate) so the button doesn't flicker on.
-    if [[ "$a" =~ ^[0-9]+$ ]] && [ "$a" -le 360 ]; then
-      if [ "$mode" = laptop ] && [ "$a" -ge "$ent" ]; then
-        mode=tablet; _dbg "tablet (angle $a)"
-        _osk_button_up
-      elif [ "$mode" = tablet ] && [ "$a" -le "$ext" ]; then
-        mode=laptop; _dbg "laptop (angle $a)"
-        pkill -f osk-button.py 2>/dev/null; pkill -x wvkbd-mobintl 2>/dev/null
+    [[ "$a" =~ ^[0-9]+$ ]] && [ "$a" -le 360 ] || a=""   # drop >360 sentinel/garbage
+    o=$(cat "$ORIENT_CACHE" 2>/dev/null)                 # normal / left-up / ... (from autorotate)
+    tilted=0; [ -n "$o" ] && [ "$o" != normal ] && tilted=1
+    if [ "$mode" = laptop ]; then
+      # show on fold past the enter angle OR when physically tilted off-normal
+      if { [ -n "$a" ] && [ "$a" -ge "$ent" ]; } || [ "$tilted" = 1 ]; then
+        mode=tablet; _dbg "tablet (angle ${a:-?} orient ${o:-?})"; _osk_button_up
+      fi
+    else
+      # hide only with a valid angle at/below the exit angle AND back to normal
+      if [ -n "$a" ] && [ "$a" -le "$ext" ] && [ "$tilted" = 0 ]; then
+        mode=laptop; _dbg "laptop (angle $a orient ${o:-?})"
+        pkill -x osk-button 2>/dev/null; pkill -x wvkbd-mobintl 2>/dev/null
       fi
     fi
     sleep "$iv"
