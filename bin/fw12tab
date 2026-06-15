@@ -18,6 +18,23 @@ ORIENT_CACHE="${XDG_RUNTIME_DIR:-/tmp}/fw12tab-orientation"
 OSK_BUTTON="${FW12TAB_OSK_BUTTON:-/usr/lib/fw12tab/osk-button.py}"
 CONF="/usr/share/fw12tab/fw12tab.conf"
 
+# On-screen keyboard binary: prefer fw12tab's German-QWERTZ build, fall back to
+# a system wvkbd. The layer set defaults to the German layout (with Super/Alt
+# keys so Hyprland is drivable straight from the keyboard).
+_osk_bin() {
+  local b
+  for b in "${FW12TAB_OSK_BIN:-}" /usr/lib/fw12tab/wvkbd-mobintl \
+           "$(command -v wvkbd-mobintl 2>/dev/null)"; do
+    [ -n "$b" ] && [ -x "$b" ] && { printf '%s' "$b"; return; }
+  done
+}
+OSK_BIN="$(_osk_bin)"
+case "$OSK_BIN" in
+  /usr/lib/fw12tab/*) _def_layers="deutsch,special,nav" ;;  # German build
+  *)                  _def_layers="full,special,nav" ;;     # stock fallback
+esac
+OSK_LAYERS="${FW12TAB_OSK_LAYERS:-$_def_layers}"
+
 # gtk4-layer-shell must be preloaded for the Python/GI button to register as a
 # layer surface (else libwayland-client loads first and the hook fails).
 _osk_preload() {
@@ -93,8 +110,10 @@ _osk_button_restack() {  # force the button to be the newest overlay -> on top
 
 cmd_osk_toggle() {
   if pgrep -x wvkbd-mobintl >/dev/null 2>&1; then pkill -x wvkbd-mobintl
-  else _have wvkbd-mobintl || { _notify "wvkbd not installed"; exit 1; }
-       setsid -f wvkbd-mobintl -L "${FW12TAB_OSK_HEIGHT:-300}" >/dev/null 2>&1
+  else [ -x "$OSK_BIN" ] || { _notify "wvkbd not installed"; exit 1; }
+       setsid -f "$OSK_BIN" -l "$OSK_LAYERS" --landscape-layers "$OSK_LAYERS" \
+              -H "${FW12TAB_OSK_HEIGHT:-340}" -L "${FW12TAB_OSK_HEIGHT_L:-340}" \
+              >/dev/null 2>&1
        # Keyboard and button share the overlay layer; re-create the button so
        # it stacks above the just-spawned keyboard and stays dismissable.
        _osk_button_restack; fi
@@ -147,13 +166,13 @@ cmd_setup() {
     echo "         'exec-once = .../FW12Rotate' lines to avoid a Super+R clash."
   fi
   _have hyprctl && hyprctl reload >/dev/null 2>&1
-  echo "Done. Super+R toggles rotation; fold past ${FW12TAB_ENTER:-200}° for the keyboard button."
+  echo "Done. Super+R toggles rotation; fold past ${FW12TAB_ENTER:-170}° for the keyboard button."
 }
 
 cmd_doctor() {
   local rc=0 b af mon
   echo "fw12tab doctor"
-  for b in hyprctl jq monitor-sensor wvkbd-mobintl python3 notify-send; do
+  for b in hyprctl jq monitor-sensor python3 notify-send; do
     if _have "$b"; then echo "  [ok] $b"; else echo "  [MISSING] $b"; rc=1; fi
   done
   if python3 -c "import gi; gi.require_version('Gtk4LayerShell','1.0'); from gi.repository import Gtk4LayerShell" 2>/dev/null
@@ -168,6 +187,10 @@ cmd_doctor() {
   grep -qF "fw12tab/fw12tab.conf" "$HOME/.config/hypr/hyprland.conf" 2>/dev/null \
     && echo "  [ok] Hyprland sources fw12tab.conf" || echo "  [--] not wired up (run: fw12tab setup)"
   [ -f "$OSK_BUTTON" ] && echo "  [ok] osk-button: $OSK_BUTTON" || { echo "  [MISSING] $OSK_BUTTON"; rc=1; }
+  if [ -x "$OSK_BIN" ]; then
+    case "$OSK_BIN" in /usr/lib/fw12tab/*) b="German build";; *) b="stock (no German layer)";; esac
+    echo "  [ok] keyboard: $OSK_BIN — $b; layers: $OSK_LAYERS"
+  else echo "  [MISSING] no wvkbd binary"; rc=1; fi
   return $rc
 }
 
