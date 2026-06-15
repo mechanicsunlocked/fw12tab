@@ -8,7 +8,7 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PREFIX="${PREFIX:-/usr}"
 
 echo "==> Installing repo dependencies"
-sudo pacman -S --needed --noconfirm bash iio-sensor-proxy jq python-gobject gtk4 libnotify
+sudo pacman -S --needed --noconfirm bash iio-sensor-proxy jq python-gobject gtk4 gtk4-layer-shell libnotify
 
 if ! pacman -Q wvkbd >/dev/null 2>&1; then
   echo "==> Installing wvkbd (AUR)"
