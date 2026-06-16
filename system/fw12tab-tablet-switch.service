@@ -1,0 +1,10 @@
+[Unit]
+Description=fw12tab: bind the Framework 12 SW_TABLET_MODE switch (soc_button_array probe-race fix)
+ConditionPathExists=/sys/bus/platform/drivers/soc_button_array
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/fw12tab/bind-tablet-switch
+
+[Install]
+WantedBy=multi-user.target

@@ -42,6 +42,14 @@ sudo install -Dm644 "$REPO_DIR/share/framework-logo.svg" "$PREFIX/share/fw12tab/
 sudo install -Dm644 "$REPO_DIR/README.md"          "$PREFIX/share/doc/fw12tab/README.md"
 sudo install -Dm644 "$REPO_DIR/LICENSE"            "$PREFIX/share/licenses/fw12tab/LICENSE"
 
+echo "==> Installing the tablet-switch bind service (soc_button_array probe-race fix)"
+sudo install -Dm755 "$REPO_DIR/system/fw12tab-bind-tablet-switch" "$PREFIX/lib/fw12tab/bind-tablet-switch"
+sudo install -Dm644 "$REPO_DIR/system/fw12tab-tablet-switch.service" "$PREFIX/lib/systemd/system/fw12tab-tablet-switch.service"
+sudo install -Dm755 "$REPO_DIR/system/fw12tab-tablet-switch-sleep" "$PREFIX/lib/systemd/system-sleep/fw12tab-tablet-switch"
+sudo systemctl daemon-reload
+sudo systemctl enable --now fw12tab-tablet-switch.service
+id -nG | tr ' ' '\n' | grep -qx input || echo "    NOTE: add yourself to the 'input' group: sudo usermod -aG input \"\$USER\" (then re-login)"
+
 echo "==> Wiring up Hyprland (per-user)"
 fw12tab setup
 

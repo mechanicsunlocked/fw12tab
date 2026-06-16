@@ -46,6 +46,10 @@ package() {
   install -Dm755 "$srcdir/oskbd"           "$pkgdir/usr/lib/$_pkgname/oskbd"
   install -Dm755 "$srcdir/osk-button"      "$pkgdir/usr/lib/$_pkgname/osk-button"
   install -Dm755 "$srcdir/tabletmode"      "$pkgdir/usr/lib/$_pkgname/tabletmode"
+  # Tablet-switch bind service + resume hook (soc_button_array probe-race fix).
+  install -Dm755 system/fw12tab-bind-tablet-switch "$pkgdir/usr/lib/$_pkgname/bind-tablet-switch"
+  install -Dm644 system/fw12tab-tablet-switch.service "$pkgdir/usr/lib/systemd/system/fw12tab-tablet-switch.service"
+  install -Dm755 system/fw12tab-tablet-switch-sleep "$pkgdir/usr/lib/systemd/system-sleep/fw12tab-tablet-switch"
   install -Dm644 hypr/fw12tab.conf         "$pkgdir/usr/share/$_pkgname/fw12tab.conf"
   install -Dm644 share/framework-logo.svg  "$pkgdir/usr/share/$_pkgname/framework-logo.svg"
   install -Dm644 README.md                 "$pkgdir/usr/share/doc/$_pkgname/README.md"

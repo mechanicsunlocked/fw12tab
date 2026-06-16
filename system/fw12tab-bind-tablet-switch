@@ -1,0 +1,20 @@
+#!/bin/bash
+# Framework 12 SW_TABLET_MODE switch fix.
+#
+# soc_button_array (ACPI INT33D3, the gpio-keys tablet-mode switch) can lose a
+# boot/resume probe race against pinctrl_tigerlake and come up UNBOUND, leaving
+# no tablet-mode switch at all. This is the reload that Framework's knowledgebase
+# documents (`rmmod/modprobe soc_button_array`), automated: make sure the pin
+# controller is up, then bind the device if it isn't already.
+set -u
+drv=/sys/bus/platform/drivers/soc_button_array
+modprobe pinctrl_tigerlake 2>/dev/null || true
+modprobe soc_button_array  2>/dev/null || true
+[ -d "$drv" ] || exit 0
+for dev in /sys/bus/platform/devices/INT33D3:*; do
+  [ -e "$dev" ] || continue
+  id=${dev##*/}
+  [ -e "$drv/$id" ] && continue            # already bound
+  echo "$id" > "$drv/bind" 2>/dev/null || true
+done
+exit 0
