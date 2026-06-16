@@ -3,37 +3,39 @@
 #
 #   setup          Wire up Hyprland config (run once, as your normal user)
 #   rotate-toggle  Toggle auto-rotation on/off (bound to Super+R)
-#   osk-toggle     Show/hide the on-screen keyboard (wvkbd)
+#   osk-toggle     Show/hide the on-screen keyboard (oskbd)
 #   autorotate     Event-driven rotation daemon (exec-once) — ~0% idle CPU
-#   tablet-watch   Hinge-angle tablet-mode watcher (exec-once) — light poll
+#   tablet-watch   Tablet-mode watcher off SW_TABLET_MODE (exec-once) — 0% idle
 #   doctor         Print diagnostics
 #
-# Debug: FW12TAB_DEBUG=1 logs to stderr. Tunables: FW12TAB_ENTER / FW12TAB_EXIT
-# (degrees), FW12TAB_POLL (s), FW12TAB_OSK_HEIGHT (px), FW12TAB_ANGLE_FILE.
+# Debug: FW12TAB_DEBUG=1 logs to stderr. Tunables: FW12TAB_OSK_HEIGHT (px),
+# FW12TAB_TABLET_BIN (SW_TABLET_MODE reader path).
 # Inspired by https://github.com/2disbetter/FW12Rotate
 set -u
 
 STATE_FILE="${FW12TAB_STATE:-$HOME/.config/hypr/fw12tab-rotation-enabled}"
 ORIENT_CACHE="${XDG_RUNTIME_DIR:-/tmp}/fw12tab-orientation"
+TABLET_FLAG="${XDG_RUNTIME_DIR:-/tmp}/fw12tab-tablet"   # 1 = in tablet mode
 OSK_BUTTON="${FW12TAB_OSK_BUTTON:-/usr/lib/fw12tab/osk-button}"
+TABLET_BIN="${FW12TAB_TABLET_BIN:-/usr/lib/fw12tab/tabletmode}"   # SW_TABLET_MODE reader (C)
 CONF="/usr/share/fw12tab/fw12tab.conf"
 
-# On-screen keyboard binary: prefer fw12tab's German-QWERTZ build, fall back to
-# a system wvkbd. The layer set defaults to the German layout (with Super/Alt
-# keys so Hyprland is drivable straight from the keyboard).
-_osk_bin() {
-  local b
-  for b in "${FW12TAB_OSK_BIN:-}" /usr/lib/fw12tab/wvkbd-mobintl \
-           "$(command -v wvkbd-mobintl 2>/dev/null)"; do
-    [ -n "$b" ] && [ -x "$b" ] && { printf '%s' "$b"; return; }
-  done
+# On-screen keyboard: fw12tab's own GTK4 layer-shell keyboard (oskbd). It mirrors
+# the FW12 physical layout and uploads the real xkb keymap, so it types exactly
+# like the built-in keyboard. Process name 'oskbd'; manage with pgrep/pkill -x.
+OSKBD_BIN="${FW12TAB_OSKBD:-/usr/lib/fw12tab/oskbd}"
+
+# Detect the active keyboard layout/variant (Hyprland input.conf, else localectl,
+# else 'us') so oskbd's keymap + key labels match the physical keyboard.
+_kb_layout() {
+  local lay var
+  lay=$(grep -E '^[[:space:]]*kb_layout' "$HOME/.config/hypr/input.conf" 2>/dev/null \
+        | head -1 | sed -E 's/.*=[[:space:]]*//; s/[[:space:]]*(#.*)?$//' | cut -d, -f1)
+  var=$(grep -E '^[[:space:]]*kb_variant' "$HOME/.config/hypr/input.conf" 2>/dev/null \
+        | head -1 | sed -E 's/.*=[[:space:]]*//; s/[[:space:]]*(#.*)?$//' | cut -d, -f1)
+  [ -n "$lay" ] || lay=$(localectl status 2>/dev/null | sed -nE 's/.*X11 Layout:[[:space:]]*([^ ,]+).*/\1/p' | head -1)
+  printf '%s\t%s' "${lay:-us}" "$var"
 }
-OSK_BIN="$(_osk_bin)"
-case "$OSK_BIN" in
-  /usr/lib/fw12tab/*) _def_layers="system,special,nav" ;;  # layout-matched build
-  *)                  _def_layers="full,special,nav" ;;    # stock fallback
-esac
-OSK_LAYERS="${FW12TAB_OSK_LAYERS:-$_def_layers}"
 
 _dbg()    { [ "${FW12TAB_DEBUG:-0}" = 1 ] && printf '[fw12tab %s] %s\n' "$(date +%T)" "$*" >&2; return 0; }
 _notify() { command -v notify-send >/dev/null 2>&1 && notify-send -i input-tablet "fw12tab" "$1"; return 0; }
@@ -46,18 +48,27 @@ _panel() {  # internal panel (eDP*), else first monitor
 }
 _scale()     { hyprctl monitors -j 2>/dev/null | jq -r --arg m "$1" '.[]|select(.name==$m)|.scale' 2>/dev/null; }
 _transform() { case "$1" in normal) echo 0;; left-up) echo 1;; bottom-up) echo 2;; right-up) echo 3;; *) echo -1;; esac; }
-_enabled()   { [ "$(cat "$STATE_FILE" 2>/dev/null)" = 1 ]; }
+# Master switch (Super+R). Default ON: a missing/empty file means enabled, so
+# auto-rotation works out of the box — it still only acts in tablet mode.
+_enabled()     { [ "$(cat "$STATE_FILE" 2>/dev/null || echo 1)" != 0 ]; }
+_tablet_mode() { [ "$(cat "$TABLET_FLAG" 2>/dev/null)" = 1 ]; }
+
+_set_transform() {  # $1 = transform int — drive panel + touch + tablet input
+  local mon sc; mon=$(_panel); [ -n "$mon" ] || { _dbg "no monitor"; return 0; }
+  sc=$(_scale "$mon"); { [ -n "$sc" ] && [ "$sc" != null ]; } || sc=1
+  hyprctl keyword monitor "$mon, preferred, auto, $sc, transform, $1" >/dev/null 2>&1
+  hyprctl keyword input:touchdevice:transform "$1" >/dev/null 2>&1
+  hyprctl keyword input:tablet:transform "$1" >/dev/null 2>&1
+}
+_reset_rotation() { _dbg "reset to landscape"; _set_transform 0; }
 
 _apply() {  # $1 = orientation
   printf '%s' "$1" > "$ORIENT_CACHE" 2>/dev/null
   _enabled || return 0
-  local t mon sc; t=$(_transform "$1"); [ "$t" -ge 0 ] 2>/dev/null || { _dbg "unknown orientation '$1'"; return 0; }
-  mon=$(_panel); [ -n "$mon" ] || { _dbg "no monitor"; return 0; }
-  sc=$(_scale "$mon"); { [ -n "$sc" ] && [ "$sc" != null ]; } || sc=1
-  _dbg "apply $1 -> transform $t on $mon (scale $sc)"
-  hyprctl keyword monitor "$mon, preferred, auto, $sc, transform, $t" >/dev/null 2>&1
-  hyprctl keyword input:touchdevice:transform "$t" >/dev/null 2>&1
-  hyprctl keyword input:tablet:transform "$t" >/dev/null 2>&1
+  _tablet_mode || return 0   # gate: rotate ONLY in tablet mode (like GNOME/Windows)
+  local t; t=$(_transform "$1"); [ "$t" -ge 0 ] 2>/dev/null || { _dbg "unknown orientation '$1'"; return 0; }
+  _dbg "apply $1 -> transform $t"
+  _set_transform "$t"
 }
 
 cmd_autorotate() {
@@ -79,12 +90,12 @@ cmd_autorotate() {
 }
 
 cmd_rotate_toggle() {
-  local s; s=$(cat "$STATE_FILE" 2>/dev/null); [[ "$s" =~ ^[01]$ ]] || s=0
-  if [ "$s" = 1 ]; then echo 0 > "$STATE_FILE"; _notify "Auto-rotation disabled"
+  local s; s=$(cat "$STATE_FILE" 2>/dev/null); [[ "$s" =~ ^[01]$ ]] || s=1   # default ON
+  if [ "$s" = 1 ]; then echo 0 > "$STATE_FILE"; _notify "Auto-rotation disabled"; _reset_rotation
   else echo 1 > "$STATE_FILE"; _notify "Auto-rotation enabled"; _apply "$(cat "$ORIENT_CACHE" 2>/dev/null || echo normal)"; fi
 }
 
-# --- on-screen keyboard (wvkbd) ---------------------------------------------
+# --- on-screen keyboard (oskbd) ---------------------------------------------
 # The toggle button is a small C/GTK4 layer-shell binary (osk-button).
 _osk_launch() {
   [ -x "$OSK_BUTTON" ] || return 1
@@ -98,73 +109,47 @@ _osk_button_restack() {  # force the button to be the newest overlay -> on top
 }
 
 cmd_osk_toggle() {
-  if pgrep -x wvkbd-mobintl >/dev/null 2>&1; then pkill -x wvkbd-mobintl
-  else [ -x "$OSK_BIN" ] || { _notify "wvkbd not installed"; exit 1; }
-       setsid -f "$OSK_BIN" -l "$OSK_LAYERS" --landscape-layers "$OSK_LAYERS" \
-              -H "${FW12TAB_OSK_HEIGHT:-340}" -L "${FW12TAB_OSK_HEIGHT_L:-340}" \
-              >/dev/null 2>&1
-       # Keyboard and button share the overlay layer; re-create the button so
-       # it stacks above the just-spawned keyboard and stays dismissable.
-       _osk_button_restack; fi
+  if pgrep -x oskbd >/dev/null 2>&1; then pkill -x oskbd; return; fi
+  [ -x "$OSKBD_BIN" ] || { _notify "keyboard not installed (oskbd)"; exit 1; }
+  local lay var; IFS=$'\t' read -r lay var < <(_kb_layout)
+  setsid -f "$OSKBD_BIN" "$lay" "$var" "" >/dev/null 2>&1
+  # oskbd is on the TOP layer; the osk-button is OVERLAY, so it already floats
+  # above it and stays tappable to toggle the keyboard back off.
 }
 
-# --- tablet-mode watcher (hinge angle) --------------------------------------
-# The FW12 EC exposes hinge angle via cros-ec-lid-angle but gives NO interrupt
-# and NO SW_TABLET_MODE switch, so a light periodic read is the minimal-CPU
-# option. Folding is slow, so a 2s poll (one sysfs read) is plenty.
-_angle_file() {
-  [ -n "${FW12TAB_ANGLE_FILE:-}" ] && { printf '%s' "$FW12TAB_ANGLE_FILE"; return 0; }
-  local d
-  for d in /sys/bus/iio/devices/iio:device*; do
-    [ -r "$d/name" ] && [ "$(cat "$d/name" 2>/dev/null)" = cros-ec-lid-angle ] && [ -r "$d/in_angl_raw" ] \
-      && { printf '%s' "$d/in_angl_raw"; return 0; }
-  done
-  return 1
-}
-
+# --- tablet-mode watcher (SW_TABLET_MODE switch) ----------------------------
+# The FW12 EC exposes a real SW_TABLET_MODE switch (INT33D3 gpio-keys) — the
+# same signal GNOME/Windows gate tablet mode on. The C reader (tabletmode)
+# streams 1/0 on every change, so this is fully event-driven: no polling, no
+# 500-angle ambiguity, and it survives suspend/resume. Firmware sets the hinge
+# thresholds (~200° enter, ~100° exit) — they are not tunable.
 cmd_tablet_watch() {
-  local af mode=laptop a o tilted valid laptop_angle
-  local ent="${FW12TAB_ENTER:-170}" ext="${FW12TAB_EXIT:-140}" iv="${FW12TAB_POLL:-2}"
-  af=$(_angle_file) || { echo "fw12tab: no cros-ec-lid-angle sensor" >&2; exit 1; }
-  _dbg "watching $af enter>=$ent exit<=$ext (or tilt) every ${iv}s"
-  # The watcher owns the button's lifecycle: start clean, then let hinge angle
-  # (with accelerometer tilt as a backup) drive it.
-  pkill -x osk-button 2>/dev/null
-  while :; do
-    a=$(cat "$af" 2>/dev/null)
-    # A real reading is 0..360. The EC returns 500 when fully folded into tablet
-    # (~>345°), briefly during fast motion, AND when the base accelerometer is
-    # asleep after suspend/resume. 500 is therefore ambiguous: it must HOLD the
-    # current mode, never flip it. The real through-motion angles on the way
-    # into/out of a fold are what actually drive the transitions.
-    if [[ "$a" =~ ^[0-9]+$ ]] && [ "$a" -le 360 ]; then valid=1; else valid=0; fi
-    o=$(cat "$ORIENT_CACHE" 2>/dev/null)                 # normal / left-up / ... (from autorotate)
-    tilted=0; [ -n "$o" ] && [ "$o" != normal ] && tilted=1
-    if [ "$mode" = laptop ]; then
-      # Enter on a valid folded angle, OR on tilt — but a valid laptop-range
-      # angle vetoes tilt (guards against a stale orientation flapping the
-      # button while the hinge clearly says laptop).
-      laptop_angle=0; [ "$valid" = 1 ] && [ "$a" -le "$ext" ] && laptop_angle=1
-      if { [ "$valid" = 1 ] && [ "$a" -ge "$ent" ]; } || { [ "$tilted" = 1 ] && [ "$laptop_angle" = 0 ]; }; then
-        mode=tablet; _dbg "tablet (angle ${a:-?} orient ${o:-?})"; _osk_button_up
-      fi
-    else
-      # Leave tablet only on a real angle back in the laptop range. 500 (folded
-      # flat) and motion glitches keep the button up — the 'vanishes in tablet'
-      # fix: orientation is NOT used to hide.
-      if [ "$valid" = 1 ] && [ "$a" -le "$ext" ]; then
-        mode=laptop; _dbg "laptop (angle $a orient ${o:-?})"
-        pkill -x osk-button 2>/dev/null; pkill -x wvkbd-mobintl 2>/dev/null
-      fi
-    fi
-    sleep "$iv"
+  local st
+  [ -x "$TABLET_BIN" ] || { echo "fw12tab: tablet-mode reader missing: $TABLET_BIN" >&2; exit 1; }
+  _dbg "watching SW_TABLET_MODE via $TABLET_BIN"
+  # The watcher owns the button + the rotation gate; start from a clean laptop.
+  pkill -x osk-button 2>/dev/null; printf 0 > "$TABLET_FLAG" 2>/dev/null
+  while :; do   # reconnect if the reader exits (device hotplug / resume)
+    while IFS= read -r st; do
+      case "$st" in
+        1) _dbg "tablet (SW_TABLET_MODE=1)"
+           printf 1 > "$TABLET_FLAG" 2>/dev/null     # open the rotation gate first
+           _osk_button_up
+           _apply "$(cat "$ORIENT_CACHE" 2>/dev/null || echo normal)" ;;  # catch up to tilt
+        0) _dbg "laptop (SW_TABLET_MODE=0)"
+           printf 0 > "$TABLET_FLAG" 2>/dev/null     # close the gate, back to landscape
+           pkill -x osk-button 2>/dev/null; pkill -x oskbd 2>/dev/null
+           _reset_rotation ;;
+      esac
+    done < <("$TABLET_BIN" 2>/dev/null)
+    _dbg "tablet reader exited; retrying"; sleep 2
   done
 }
 
 # --- setup / doctor ---------------------------------------------------------
 cmd_setup() {
   local hypr="$HOME/.config/hypr/hyprland.conf"
-  mkdir -p "$HOME/.config/hypr"; [ -f "$STATE_FILE" ] || echo 0 > "$STATE_FILE"
+  mkdir -p "$HOME/.config/hypr"; [ -f "$STATE_FILE" ] || echo 1 > "$STATE_FILE"
   if [ -f "$hypr" ] && grep -qF "fw12tab/fw12tab.conf" "$hypr"; then echo "Already wired up."
   else printf '\n# fw12tab\nsource = %s\n' "$CONF" >> "$hypr"; echo "Added source line to $hypr"; fi
   if [ -f "$hypr" ] && grep -qiE '^[[:space:]]*(bind|exec-once)[^#]*(FW12Rotate|rotation-toggle|toggle-rotation\.sh)' "$hypr"; then
@@ -172,29 +157,29 @@ cmd_setup() {
     echo "         'exec-once = .../FW12Rotate' lines to avoid a Super+R clash."
   fi
   _have hyprctl && hyprctl reload >/dev/null 2>&1
-  echo "Done. Super+R toggles rotation; fold past ${FW12TAB_ENTER:-170}° for the keyboard button."
+  echo "Done. Super+R toggles rotation; fold into tablet posture for the keyboard button."
 }
 
 cmd_doctor() {
-  local rc=0 b af mon
+  local rc=0 b mon
   echo "fw12tab doctor"
   for b in hyprctl jq monitor-sensor notify-send; do
     if _have "$b"; then echo "  [ok] $b"; else echo "  [MISSING] $b"; rc=1; fi
   done
-  if af=$(_angle_file 2>/dev/null); then echo "  [ok] hinge sensor: $af = $(cat "$af" 2>/dev/null)°"
-  else echo "  [MISSING] cros-ec-lid-angle sensor"; rc=1; fi
+  if [ -x "$TABLET_BIN" ]; then echo "  [ok] tablet switch reader (C): $TABLET_BIN"
+  else echo "  [MISSING] $TABLET_BIN (run install.sh / rebuild)"; rc=1; fi
   mon=$(_panel)
   echo "  panel: ${mon:-?} (scale $(_scale "$mon"))"
-  echo "  rotation: $(_enabled && echo enabled || echo disabled); orientation: $(cat "$ORIENT_CACHE" 2>/dev/null || echo n/a)"
+  echo "  rotation: $(_enabled && echo enabled || echo disabled) (only acts in tablet mode); mode: $(_tablet_mode && echo tablet || echo laptop); orientation: $(cat "$ORIENT_CACHE" 2>/dev/null || echo n/a)"
   pgrep -f "fw12tab autorotate"   >/dev/null 2>&1 && echo "  [ok] autorotate running"   || echo "  [--] autorotate not running"
   pgrep -f "fw12tab tablet-watch" >/dev/null 2>&1 && echo "  [ok] tablet-watch running" || echo "  [--] tablet-watch not running"
   grep -qF "fw12tab/fw12tab.conf" "$HOME/.config/hypr/hyprland.conf" 2>/dev/null \
     && echo "  [ok] Hyprland sources fw12tab.conf" || echo "  [--] not wired up (run: fw12tab setup)"
   [ -x "$OSK_BUTTON" ] && echo "  [ok] osk-button (C): $OSK_BUTTON" || { echo "  [MISSING] $OSK_BUTTON"; rc=1; }
-  if [ -x "$OSK_BIN" ]; then
-    case "$OSK_BIN" in /usr/lib/fw12tab/*) b="layout-matched build";; *) b="stock (generic 'full')";; esac
-    echo "  [ok] keyboard: $OSK_BIN — $b; layers: $OSK_LAYERS"
-  else echo "  [MISSING] no wvkbd binary"; rc=1; fi
+  if [ -x "$OSKBD_BIN" ]; then
+    local lay var; IFS=$'\t' read -r lay var < <(_kb_layout)
+    echo "  [ok] keyboard (C/GTK4): $OSKBD_BIN — layout ${lay}${var:+($var)}"
+  else echo "  [MISSING] $OSKBD_BIN"; rc=1; fi
   return $rc
 }
 

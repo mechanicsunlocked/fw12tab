@@ -1,9 +1,7 @@
-fw12tab/
-keyboard/genlayout
-lib/osk-button
-# makepkg build artifacts
-*.o
-/pkg/
-*.pkg.tar.zst
-/src/
-*.tar.gz
+# compiled C binaries (built by install.sh / PKGBUILD)
+/lib/oskbd
+/lib/osk-button
+/lib/tabletmode
+# generated wayland protocol glue
+*-protocol.c
+*-client-protocol.h
