@@ -12,12 +12,12 @@ post_install() {
 
     Then relaunch Hyprland (Super+Esc -> Relaunch, or `hyprctl reload`).
 
-    Usage:
+    Usage (tablet mode):
       * Super+R          toggle auto-rotation (acts only in tablet mode)
-      * Fold into tablet a draggable keyboard button appears
+      * Fold into tablet a draggable keyboard button + a top pull-handle appear
       * Tap the button   show/hide the on-screen keyboard
       * Super+Shift+K    show/hide the keyboard (hardware-key fallback)
-      * Drag the button  move it anywhere
+      * Pull down (top)  open the touch app launcher (tap a tile to launch)
 
     Make sure your user is in the 'input' group (for the tablet-mode switch):
         sudo usermod -aG input "$USER"   # then re-login

@@ -24,6 +24,8 @@ CONF="/usr/share/fw12tab/fw12tab.conf"
 # the FW12 physical layout and uploads the real xkb keymap, so it types exactly
 # like the built-in keyboard. Process name 'oskbd'; manage with pgrep/pkill -x.
 OSKBD_BIN="${FW12TAB_OSKBD:-/usr/lib/fw12tab/oskbd}"
+LAUNCH_BIN="${FW12TAB_LAUNCH:-/usr/lib/fw12tab/touchlaunch}"   # touch app launcher (C/GTK4)
+EDGE_BIN="${FW12TAB_EDGE:-/usr/lib/fw12tab/edgeswipe}"         # top-edge pull-down opener (C/GTK4)
 
 # Detect the active keyboard layout/variant (Hyprland input.conf, else localectl,
 # else 'us') so oskbd's keymap + key labels match the physical keyboard.
@@ -104,17 +106,35 @@ _osk_launch() {
 _osk_button_up() {  # spawn only if not already running (tablet entry)
   pgrep -x osk-button >/dev/null 2>&1 || _osk_launch
 }
+_edge_up() {  # top-edge pull-down launcher opener (tablet entry)
+  [ -x "$EDGE_BIN" ] || return 0
+  pgrep -x edgeswipe >/dev/null 2>&1 || setsid -f "$EDGE_BIN" >/dev/null 2>&1
+}
 _osk_button_restack() {  # force the button to be the newest overlay -> on top
   pkill -x osk-button 2>/dev/null; sleep 0.3; _osk_launch
 }
 
 cmd_osk_toggle() {
   if pgrep -x oskbd >/dev/null 2>&1; then pkill -x oskbd; return; fi
-  [ -x "$OSKBD_BIN" ] || { _notify "keyboard not installed (oskbd)"; exit 1; }
-  local lay var; IFS=$'\t' read -r lay var < <(_kb_layout)
-  setsid -f "$OSKBD_BIN" "$lay" "$var" "" >/dev/null 2>&1
+  cmd_osk_show
   # oskbd is on the TOP layer; the osk-button is OVERLAY, so it already floats
   # above it and stays tappable to toggle the keyboard back off.
+}
+
+# Idempotent show/hide (used by the touch launcher's search field).
+cmd_osk_show() {
+  pgrep -x oskbd >/dev/null 2>&1 && return 0
+  [ -x "$OSKBD_BIN" ] || { _notify "keyboard not installed (oskbd)"; return 1; }
+  local lay var; IFS=$'\t' read -r lay var < <(_kb_layout)
+  setsid -f "$OSKBD_BIN" "$lay" "$var" "" >/dev/null 2>&1
+}
+cmd_osk_hide() { pkill -x oskbd 2>/dev/null; return 0; }
+
+# Touch app launcher: open if closed, close if already open (toggle).
+cmd_launch() {
+  if pgrep -x touchlaunch >/dev/null 2>&1; then pkill -x touchlaunch; return; fi
+  [ -x "$LAUNCH_BIN" ] || { _notify "launcher not installed (touchlaunch)"; exit 1; }
+  setsid -f "$LAUNCH_BIN" >/dev/null 2>&1
 }
 
 # --- tablet-mode watcher (SW_TABLET_MODE switch) ----------------------------
@@ -128,17 +148,19 @@ cmd_tablet_watch() {
   [ -x "$TABLET_BIN" ] || { echo "fw12tab: tablet-mode reader missing: $TABLET_BIN" >&2; exit 1; }
   _dbg "watching SW_TABLET_MODE via $TABLET_BIN"
   # The watcher owns the button + the rotation gate; start from a clean laptop.
-  pkill -x osk-button 2>/dev/null; printf 0 > "$TABLET_FLAG" 2>/dev/null
+  pkill -x osk-button 2>/dev/null; pkill -x edgeswipe 2>/dev/null
+  printf 0 > "$TABLET_FLAG" 2>/dev/null
   while :; do   # reconnect if the reader exits (device hotplug / resume)
     while IFS= read -r st; do
       case "$st" in
         1) _dbg "tablet (SW_TABLET_MODE=1)"
            printf 1 > "$TABLET_FLAG" 2>/dev/null     # open the rotation gate first
-           _osk_button_up
+           _osk_button_up; _edge_up
            _apply "$(cat "$ORIENT_CACHE" 2>/dev/null || echo normal)" ;;  # catch up to tilt
         0) _dbg "laptop (SW_TABLET_MODE=0)"
            printf 0 > "$TABLET_FLAG" 2>/dev/null     # close the gate, back to landscape
            pkill -x osk-button 2>/dev/null; pkill -x oskbd 2>/dev/null
+           pkill -x edgeswipe 2>/dev/null; pkill -x touchlaunch 2>/dev/null
            _reset_rotation ;;
       esac
     done < <("$TABLET_BIN" 2>/dev/null)
@@ -185,6 +207,8 @@ cmd_doctor() {
 
 case "${1:-}" in
   setup) cmd_setup ;; rotate-toggle) cmd_rotate_toggle ;; osk-toggle) cmd_osk_toggle ;;
+  osk-show) cmd_osk_show ;; osk-hide) cmd_osk_hide ;;
+  launch) cmd_launch ;;
   autorotate) cmd_autorotate ;; tablet-watch) cmd_tablet_watch ;; doctor) cmd_doctor ;;
   ""|-h|--help|help)
     sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//' ;;

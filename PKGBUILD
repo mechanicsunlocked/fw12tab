@@ -38,6 +38,11 @@ build() {
      $(pkg-config --cflags --libs gtk4-layer-shell-0 gtk4)
   # Tablet-mode switch reader (C, kernel headers only).
   cc -O2 -o "$srcdir/tabletmode" lib/tabletmode.c
+  # Touch app launcher + top-edge pull-down opener (C / GTK4 layer-shell).
+  cc -O2 -o "$srcdir/touchlaunch" lib/touchlaunch.c \
+     $(pkg-config --cflags --libs gtk4 gtk4-layer-shell-0)
+  cc -O2 -o "$srcdir/edgeswipe" lib/edgeswipe.c \
+     $(pkg-config --cflags --libs gtk4 gtk4-layer-shell-0)
 }
 
 package() {
@@ -46,6 +51,8 @@ package() {
   install -Dm755 "$srcdir/oskbd"           "$pkgdir/usr/lib/$_pkgname/oskbd"
   install -Dm755 "$srcdir/osk-button"      "$pkgdir/usr/lib/$_pkgname/osk-button"
   install -Dm755 "$srcdir/tabletmode"      "$pkgdir/usr/lib/$_pkgname/tabletmode"
+  install -Dm755 "$srcdir/touchlaunch"     "$pkgdir/usr/lib/$_pkgname/touchlaunch"
+  install -Dm755 "$srcdir/edgeswipe"       "$pkgdir/usr/lib/$_pkgname/edgeswipe"
   # Tablet-switch bind service + resume hook (soc_button_array probe-race fix).
   install -Dm755 system/fw12tab-bind-tablet-switch "$pkgdir/usr/lib/$_pkgname/bind-tablet-switch"
   install -Dm644 system/fw12tab-tablet-switch.service "$pkgdir/usr/lib/systemd/system/fw12tab-tablet-switch.service"

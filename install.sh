@@ -29,6 +29,14 @@ cc -O2 -o "$REPO_DIR/lib/osk-button" "$REPO_DIR/lib/osk-button.c" \
 echo "==> Building the tablet-mode switch reader (C)"
 cc -O2 -o "$REPO_DIR/lib/tabletmode" "$REPO_DIR/lib/tabletmode.c"
 
+echo "==> Building the touch app launcher (touchlaunch, C / GTK4)"
+cc -O2 -o "$REPO_DIR/lib/touchlaunch" "$REPO_DIR/lib/touchlaunch.c" \
+   $(pkg-config --cflags --libs gtk4 gtk4-layer-shell-0)
+
+echo "==> Building the top-edge pull-down opener (edgeswipe, C / GTK4)"
+cc -O2 -o "$REPO_DIR/lib/edgeswipe" "$REPO_DIR/lib/edgeswipe.c" \
+   $(pkg-config --cflags --libs gtk4 gtk4-layer-shell-0)
+
 echo "==> Ensuring iio-sensor-proxy is available"
 systemctl is-enabled iio-sensor-proxy >/dev/null 2>&1 || true  # socket/dbus-activated; no enable needed
 
@@ -37,6 +45,8 @@ sudo install -Dm755 "$REPO_DIR/bin/fw12tab"        "$PREFIX/bin/fw12tab"
 sudo install -Dm755 "$REPO_DIR/lib/oskbd"          "$PREFIX/lib/fw12tab/oskbd"
 sudo install -Dm755 "$REPO_DIR/lib/osk-button"     "$PREFIX/lib/fw12tab/osk-button"
 sudo install -Dm755 "$REPO_DIR/lib/tabletmode"     "$PREFIX/lib/fw12tab/tabletmode"
+sudo install -Dm755 "$REPO_DIR/lib/touchlaunch"    "$PREFIX/lib/fw12tab/touchlaunch"
+sudo install -Dm755 "$REPO_DIR/lib/edgeswipe"      "$PREFIX/lib/fw12tab/edgeswipe"
 sudo install -Dm644 "$REPO_DIR/hypr/fw12tab.conf"  "$PREFIX/share/fw12tab/fw12tab.conf"
 sudo install -Dm644 "$REPO_DIR/share/framework-logo.svg" "$PREFIX/share/fw12tab/framework-logo.svg"
 sudo install -Dm644 "$REPO_DIR/README.md"          "$PREFIX/share/doc/fw12tab/README.md"
