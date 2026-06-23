@@ -10,6 +10,8 @@
 #
 # Debug: FW12TAB_DEBUG=1 logs to stderr. Tunables: FW12TAB_OSK_HEIGHT (px),
 # FW12TAB_TABLET_BIN (SW_TABLET_MODE reader path).
+# DISABLED — tablet-mode cursor hide (FW12TAB_CURSOR_TIMEOUT): inactive_timeout
+# couldn't survive touches. Kept below, commented out, pending a better approach.
 # Inspired by https://github.com/2disbetter/FW12Rotate
 set -u
 
@@ -19,6 +21,13 @@ TABLET_FLAG="${XDG_RUNTIME_DIR:-/tmp}/fw12tab-tablet"   # 1 = in tablet mode
 OSK_BUTTON="${FW12TAB_OSK_BUTTON:-/usr/lib/fw12tab/osk-button}"
 TABLET_BIN="${FW12TAB_TABLET_BIN:-/usr/lib/fw12tab/tabletmode}"   # SW_TABLET_MODE reader (C)
 CONF="/usr/share/fw12tab/fw12tab.conf"
+
+# DISABLED — tablet-mode cursor hide. The idea: hide the cursor by *mode*, not by
+# touch — in tablet mode set Hyprland's cursor:inactive_timeout so the pointer
+# auto-hides, and restore "never hide" (0) on return to laptop. In practice a
+# screen touch reveals the pointer (resets the idle timer), so this didn't keep
+# it hidden. Preserved for reference / a future hide_on_touch-gated approach.
+# CURSOR_TIMEOUT="${FW12TAB_CURSOR_TIMEOUT:-1}"
 
 # On-screen keyboard: fw12tab's own GTK4 layer-shell keyboard (oskbd). It mirrors
 # the FW12 physical layout and uploads the real xkb keymap, so it types exactly
@@ -63,6 +72,18 @@ _set_transform() {  # $1 = transform int — drive panel + touch + tablet input
   hyprctl keyword input:tablet:transform "$1" >/dev/null 2>&1
 }
 _reset_rotation() { _dbg "reset to landscape"; _set_transform 0; }
+
+# DISABLED — cursor (hide by tablet mode, not by touch). See note above.
+# _cursor_hide() {  # tablet entry: auto-hide the idle pointer
+#   [ "$CURSOR_TIMEOUT" != 0 ] || return 0
+#   _dbg "cursor hide (inactive_timeout=$CURSOR_TIMEOUT)"
+#   hyprctl keyword cursor:inactive_timeout "$CURSOR_TIMEOUT" >/dev/null 2>&1
+# }
+# _cursor_show() {  # laptop entry: keep the pointer always visible
+#   [ "$CURSOR_TIMEOUT" != 0 ] || return 0
+#   _dbg "cursor show (inactive_timeout=0)"
+#   hyprctl keyword cursor:inactive_timeout 0 >/dev/null 2>&1
+# }
 
 _apply() {  # $1 = orientation
   printf '%s' "$1" > "$ORIENT_CACHE" 2>/dev/null
@@ -149,16 +170,18 @@ cmd_tablet_watch() {
   _dbg "watching SW_TABLET_MODE via $TABLET_BIN"
   # The watcher owns the button + the rotation gate; start from a clean laptop.
   pkill -x osk-button 2>/dev/null; pkill -x edgeswipe 2>/dev/null
-  printf 0 > "$TABLET_FLAG" 2>/dev/null
+  printf 0 > "$TABLET_FLAG" 2>/dev/null   # DISABLED: _cursor_show
   while :; do   # reconnect if the reader exits (device hotplug / resume)
     while IFS= read -r st; do
       case "$st" in
         1) _dbg "tablet (SW_TABLET_MODE=1)"
            printf 1 > "$TABLET_FLAG" 2>/dev/null     # open the rotation gate first
+           # DISABLED: _cursor_hide                  # hide the pointer in tablet mode
            _osk_button_up; _edge_up
            _apply "$(cat "$ORIENT_CACHE" 2>/dev/null || echo normal)" ;;  # catch up to tilt
         0) _dbg "laptop (SW_TABLET_MODE=0)"
            printf 0 > "$TABLET_FLAG" 2>/dev/null     # close the gate, back to landscape
+           # DISABLED: _cursor_show                  # restore the always-visible pointer
            pkill -x osk-button 2>/dev/null; pkill -x oskbd 2>/dev/null
            pkill -x edgeswipe 2>/dev/null; pkill -x touchlaunch 2>/dev/null
            _reset_rotation ;;
@@ -193,6 +216,8 @@ cmd_doctor() {
   mon=$(_panel)
   echo "  panel: ${mon:-?} (scale $(_scale "$mon"))"
   echo "  rotation: $(_enabled && echo enabled || echo disabled) (only acts in tablet mode); mode: $(_tablet_mode && echo tablet || echo laptop); orientation: $(cat "$ORIENT_CACHE" 2>/dev/null || echo n/a)"
+  # DISABLED — tablet-mode cursor hide:
+  # echo "  cursor: $([ "$CURSOR_TIMEOUT" != 0 ] && echo "hides in tablet mode after ${CURSOR_TIMEOUT}s idle" || echo "always visible (FW12TAB_CURSOR_TIMEOUT=0)")"
   pgrep -f "fw12tab autorotate"   >/dev/null 2>&1 && echo "  [ok] autorotate running"   || echo "  [--] autorotate not running"
   pgrep -f "fw12tab tablet-watch" >/dev/null 2>&1 && echo "  [ok] tablet-watch running" || echo "  [--] tablet-watch not running"
   grep -qF "fw12tab/fw12tab.conf" "$HOME/.config/hypr/hyprland.conf" 2>/dev/null \
