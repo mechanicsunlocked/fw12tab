@@ -6,10 +6,12 @@ Tablet-mode support for the **Framework Laptop 12** on **Omarchy** / Hyprland:
 - 🧭 **Tablet detection** — reads the EC hinge angle (`cros-ec-lid-angle`); the Framework 12
   exposes no tablet-mode switch or sensor interrupt, so a single sysfs read every 2 s is the
   lowest-CPU option available (folding is slow, so 2 s is plenty).
-- ⌨️ **On-screen keyboard** — [`wvkbd`](https://github.com/jjsullivan5196/wvkbd) plus a small
-  **floating, draggable, always-on-top button** that appears when you fold into tablet mode.
-  Tap it to show/hide the keyboard; drag it anywhere. It never steals keyboard focus, so the
-  keyboard types into the app you were using.
+- ⌨️ **On-screen keyboard** — a small self-contained **C / GTK4 layer-shell keyboard** (`oskbd`)
+  that mirrors the FW12 physical layout and uploads the real system xkb keymap, so it types
+  exactly like the built-in keyboard. It comes with a **floating, draggable, always-on-top
+  button** that appears when you fold into tablet mode. Tap it to show/hide the keyboard; drag it
+  anywhere. It never steals keyboard focus, so the keyboard types into the app you were using.
+- 📲 **Touch app launcher** — pull down from the top edge in tablet mode to open a tile launcher.
 
 Inspired by [FW12Rotate](https://github.com/2disbetter/FW12Rotate); rewritten to be one small
 command, fully event-driven for rotation, and to add the tablet keyboard.
@@ -18,7 +20,7 @@ command, fully event-driven for rotation, and to add the tablet keyboard.
 
 ### AUR / one-shot (recommended)
 ```bash
-yay -S fw12tab-git      # pulls deps (wvkbd, iio-sensor-proxy, jq, gtk4, python-gobject…)
+yay -S fw12tab-git      # pulls deps (iio-sensor-proxy, jq, gtk4, gtk4-layer-shell, libxkbcommon…)
 fw12tab setup           # wire up Hyprland (run once, as your user)
 ```
 Then relaunch Hyprland (`Super+Esc → Relaunch`, or `hyprctl reload`).
@@ -49,7 +51,9 @@ makepkg -si             # builds + installs via pacman
 | Tablet watcher | `fw12tab tablet-watch` | `exec-once` (Hyprland) |
 | Rotation toggle | `fw12tab rotate-toggle` | `Super+R` |
 | Keyboard toggle | `fw12tab osk-toggle` | tap on the button |
-| Floating button | `/usr/lib/fw12tab/osk-button.py` | spawned in tablet mode |
+| On-screen keyboard | `/usr/lib/fw12tab/oskbd` | spawned by the button / `Super+Shift+K` |
+| Floating button | `/usr/lib/fw12tab/osk-button` | spawned in tablet mode |
+| Touch launcher | `/usr/lib/fw12tab/touchlaunch` | top-edge pull-down (`edgeswipe`) |
 
 `fw12tab setup` adds one line to `~/.config/hypr/hyprland.conf`:
 `source = /usr/share/fw12tab/fw12tab.conf` (binds, `exec-once`s, and the window rules).
@@ -90,7 +94,9 @@ sudo pacman -R fw12tab-git    # or: fw12tab-git via your AUR helper
 
 ## Requirements
 Framework Laptop 12 (cros-ec hinge sensor + touchscreen), Omarchy / Hyprland, Wayland.
-Deps: `bash iio-sensor-proxy wvkbd jq python-gobject gtk4 libnotify`.
+Runtime deps: `bash iio-sensor-proxy jq gtk4 gtk4-layer-shell libnotify libxkbcommon xkeyboard-config pango cairo`.
+Build deps: `base-devel wayland wayland-protocols` (provides `cc`, `pkg-config`, `wayland-scanner`).
+The one-shot `./install.sh` installs all of these via `pacman --needed`.
 
 ## License
 MIT © 2026 Sven Mathieu

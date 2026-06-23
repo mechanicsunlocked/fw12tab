@@ -151,6 +151,7 @@ static struct xkb_keymap *upload_keymap(const char *layout, const char *variant,
   struct xkb_rule_names names = { .rules = NULL, .model = NULL,
     .layout = layout, .variant = variant, .options = options };
   struct xkb_keymap *km = xkb_keymap_new_from_names(ctx, &names, XKB_KEYMAP_COMPILE_NO_FLAGS);
+  xkb_context_unref(ctx);   /* km holds its own ref to the context */
   if (!km) return NULL;
   char *str = xkb_keymap_get_as_string(km, XKB_KEYMAP_FORMAT_TEXT_V1);
   size_t size = strlen(str) + 1;
@@ -333,6 +334,7 @@ static void on_activate(GtkApplication *app, gpointer u) {
       kbd_h = geo.width / 3;
       int cap = geo.height * 2 / 5;   /* never taller than 40% of the screen */
       if (kbd_h > cap) kbd_h = cap;
+      g_object_unref(m0);   /* g_list_model_get_item() returns an owned ref */
     }
     const char *he = g_getenv("FW12TAB_OSK_HEIGHT");
     if (he && *he) kbd_h = atoi(he);
@@ -365,9 +367,14 @@ static void on_activate(GtkApplication *app, gpointer u) {
     gtk_widget_add_css_class(key, "key");
     GtkWidget *child;
     if (k->type == KT_SUPER) {
-      child = gtk_picture_new_for_filename(logo_path());
-      gtk_picture_set_content_fit(GTK_PICTURE(child), GTK_CONTENT_FIT_CONTAIN);
-      gtk_widget_set_size_request(child, 22, 22);
+      const char *lp = logo_path();
+      if (g_file_test(lp, G_FILE_TEST_EXISTS)) {
+        child = gtk_picture_new_for_filename(lp);
+        gtk_picture_set_content_fit(GTK_PICTURE(child), GTK_CONTENT_FIT_CONTAIN);
+        gtk_widget_set_size_request(child, 22, 22);
+      } else {
+        child = gtk_label_new("❖");   /* fallback glyph if the logo asset is missing */
+      }
     } else {
       child = gtk_label_new(k->label ? k->label : "");
       k->lbl = child;   /* derived keys get their symbol from relabel_keys() below */

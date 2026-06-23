@@ -120,7 +120,11 @@ static void on_activate(GtkApplication *app, gpointer u) {
   reflow(b);                         /* seed w/h from geometry */
   load_pos(b);
   reflow(b);                         /* apply loaded/default position */
-  if (b->mon) g_signal_connect(b->mon, "notify::geometry", G_CALLBACK(on_geometry), b);
+  if (b->mon) {
+    g_signal_connect(b->mon, "notify::geometry", G_CALLBACK(on_geometry), b);
+    g_object_unref(b->mon);   /* display owns the monitor; drop our get_item ref. b->mon
+                                 stays valid (borrowed) for the internal panel's lifetime. */
+  }
 
   GtkCssProvider *css = gtk_css_provider_new();
   gtk_css_provider_load_from_string(css, CSS);

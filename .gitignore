@@ -2,6 +2,8 @@
 /lib/oskbd
 /lib/osk-button
 /lib/tabletmode
+/lib/touchlaunch
+/lib/edgeswipe
 # generated wayland protocol glue
 *-protocol.c
 *-client-protocol.h
